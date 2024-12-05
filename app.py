@@ -51,8 +51,23 @@ def _clean_data(data: pd.DataFrame, date_field_names: [str], input_date_format: 
 			data[col] = pd.to_datetime(data[col], format=input_date_format)
 			print(f"Converted {col} to datetime. Dtype: {data[col].dtypes}")
 
+	# Add Y, Q, M to make referencing prior periods easier
+	data['year'] = data['date'].dt.year
+	data['quarter'] = data['date'].dt.quarter
+	data['month'] = data['date'].dt.month
+
+	# Filter to the neceesary data so we are only carrying out ETL on the data we need
+	# TODO - Extract year inputs into either UI or txt file for user to set
+	start_year = 2018
+	end_year = 2023
+	yr_range_under_review = range(start_year, end_year + 1)
+
+	data = data[np.isin(data['year'], yr_range_under_review)]
+
 	# Cleanse data
-	return _cleanse_data(data=data)
+	cleaned_data = _cleanse_data(data=data)
+
+	return cleaned_data
 
 
 def _cleanse_data(data: pd.DataFrame) -> pd.DataFrame:
@@ -60,7 +75,6 @@ def _cleanse_data(data: pd.DataFrame) -> pd.DataFrame:
 	Drops any NA values and removes any zero value rows
 	'''
 	df = data.dropna()
-	print("Removing zeros")
 	row_count_before = df.shape[0]
 	df = df.loc[df['value']!=0]
 	rows_dropped = row_count_before - df.shape[0]
@@ -69,23 +83,69 @@ def _cleanse_data(data: pd.DataFrame) -> pd.DataFrame:
 
 
 
-
-def _join_dates_from_period_under_review_to_data(data: pd.DataFrame):
-	dates = _load_dim_date()
-	dfe = pd.merge(data, dates, how='left', on=['date'], indicator=True)
-	return dfe
-
-
-
-def calculate_total_by_customer_product_by_year(data: pd.DataFrame) -> pd.DataFrame:
+def _calculate_total_by_customer_product_by_year(data: pd.DataFrame) -> pd.DataFrame:
 	'''
 	Calculates total revenue and volume by customer and product by year, quarter or month
 	'''
-	print(data.columns)
-	group_by_cols = ['customer', 'product', 'year']
+	group_by_cols = ['metric', 'customer', 'product', 'year']
 	df = data.groupby(group_by_cols)['value'].sum().reset_index()
+	return df
+
+
+def _tag_customer_status(data: pd.DataFrame) -> pd.DatetimeIndex:
+	'''
+	Tags the customer level status for revenue. 
+	If the customer has no revenue in the prior year and revenue 
+	in the current year then we deem this customer a new customer. 
+	The inverse (no revenue in the current year and revenue in the prior year) 
+	would be a churned (lost) customer.
+	'''
+	
+	# Using revenue only
+	revenue_df = data[data['metric'].str.lower() =='revenue']
+
+	# Sort values so they are ordered by customer and year
+	revenue_df = revenue_df.sort_values(by=['customer', 'product', 'year']).reset_index(drop=True)
+	
+	# CUSTOMER LEVEL
+	# Get the total revenue per customer per year
+	cust_rev_by_yr = revenue_df.groupby(['customer', 'year'])['value'].sum().reset_index()
+	cust_rev_by_yr = cust_rev_by_yr.sort_values(by=['customer', 'year']).reset_index(drop=True)
+	
+	# Compare the current and previous rows for the same customer (row-1 customer and row 0 customer)
+	cust_rev_by_yr['prior_yr_value'] = cust_rev_by_yr['value'].shift(1).where(cust_rev_by_yr['customer'] == cust_rev_by_yr['customer'].shift(1), None)
+
+	print(cust_rev_by_yr.head(10))
+
+	# Tag customer and product status'
+	cust_rev_by_yr = _apply_tagging_conditions(data=cust_rev_by_yr, output_status_field_name='cust_status_annual')
+
+	# Merge 'cust_status_annual' back to the original data
+	df = data.merge(cust_rev_by_yr[['customer', 'year', 'cust_status_annual']], on=['customer', 'year'], how='left')
 	print(df.head)
-	return 
+
+	return df
+
+
+def _apply_tagging_conditions(data: pd.DataFrame, output_status_field_name: str) -> pd.DataFrame:
+	'''
+	Applies tagging to data set based on current and previous row value
+	'''
+	# Apply vectorized conditions to determine customer status
+	conditions = [
+		(data['value'] > 0) & (data['prior_yr_value'].isna()),  # New customer (first year)
+		(data['value'] == 0) & (data['prior_yr_value'] > 0),  # Lost customer
+		(data['value'] > data['prior_yr_value']),  # Upsell
+		(data['value'] < data['prior_yr_value']),  # Downsell
+	]
+
+	choices = ['New', 'Lost', 'Upsell', 'Downsell']
+
+	# Create a field name with the status tagging
+	data[output_status_field_name] = np.select(conditions, choices, default='Recurring')
+	
+	return data
+
 
 
 def main():
@@ -100,13 +160,13 @@ def main():
 		input_date_format="%d/%m/%Y"
 	)
 
-	clean_data = _join_dates_from_period_under_review_to_data(
+	clean_data = _calculate_total_by_customer_product_by_year(
 		data=clean_data
 	)
 
-	clean_data = calculate_total_by_customer_product_by_year(
-		data=clean_data
-	)
+	clean_data = _tag_customer_status(data=clean_data)
+
+
 
 
 if __name__ == '__main__':
