@@ -2,9 +2,20 @@ import pandas as pd
 import numpy as np
 import datetime as dt
 from enum import Enum
+import streamlit as st
+import time
+import pathlib
+import plotly.graph_objects as go
 
 # Logging imports for maintenance and management
 import logging
+
+
+# Load cSS from the assets folder
+with open( "assets/styles.css" ) as css:
+	st.markdown( f'<style>{css.read()}</style>' , unsafe_allow_html= True)
+
+
 
 class BasisOfPrep(Enum):
 	''' 
@@ -168,11 +179,11 @@ def _tag_final_cust_prod_status(data: pd.DataFrame) -> pd.DataFrame:
 
 		# Cross Sell
 		((data[cust_status_field_name].str.lower().isin(['recurring', 'upsell', 'downsell'])) &
-         (data[cust_prod_status_field_name].str.lower() == 'new')),
+		 (data[cust_prod_status_field_name].str.lower() == 'new')),
 
 		# Cross loss - existing product lost for existing customer
-        ((data[cust_status_field_name].str.lower().isin(['recurring', 'upsell', 'downsell'])) &
-         (data[cust_prod_status_field_name].str.lower() == 'lost')),
+		((data[cust_status_field_name].str.lower().isin(['recurring', 'upsell', 'downsell'])) &
+		 (data[cust_prod_status_field_name].str.lower() == 'lost')),
 
 		# Customer prod level upsell, downsell or revenue is the same 'recurring'
 		(data[cust_prod_status_field_name].str.lower() == 'upsell'),
@@ -254,7 +265,7 @@ def _tag_customer_status(data: pd.DataFrame) -> pd.DatetimeIndex:
 
 
 
-def main():
+def _start_pipeline():
 
 	print("Starting pipeline")
 	
@@ -279,9 +290,64 @@ def main():
 
 	clean_data = _tag_customer_status(data=clean_data)
 
+	clean_data
+
+
+def get_chart_ref():
+
+	fig = go.Figure()
+
+	fig.add_trace(go.Waterfall(
+		x = [["2016", "2017", "2017", "2017", "2017", "2018", "2018", "2018", "2018"],
+			["initial", "q1", "q2", "q3", "total", "q1", "q2", "q3", "total"]],
+		measure = ["absolute", "relative", "relative", "relative", "total", "relative", "relative", "relative", "total"],
+		y = [1, 2, 3, -1, None, 1, 2, -4, None],
+		base = 0
+	))
+
+	fig.update_layout(
+		waterfallgroupgap = 0.5,
+	)
+
+
+	st.plotly_chart(fig, theme="streamlit", key="chart_ref")
 
 
 
-if __name__ == '__main__':
-	main()
 
+def get_chart_actual():
+
+	fig = go.Figure()
+
+	fig.add_trace(go.Waterfall(
+		x = [["2016", "2017", "2017", "2017", "2017", "2018", "2018", "2018", "2018"],
+			["initial", "q1", "q2", "q3", "total", "q1", "q2", "q3", "total"]],
+		measure = ["absolute", "relative", "relative", "relative", "total", "relative", "relative", "relative", "total"],
+		y = [1, 2, 3, -1, None, 1, 2, -4, None],
+		base = 0
+	))
+
+	fig.update_layout(
+		waterfallgroupgap = 0.5,
+		title="ARR Bridge 2019-2024",
+		font_family="Overpass",
+		font_color="white",
+		title_font_family="Overpass",
+		title_font_color="white",
+	)
+
+	st.plotly_chart(fig, theme="streamlit", key="chart_actual")
+
+
+
+
+# Title
+st.title("Price Volume Modelling")
+
+st.button("Refresh data", key='red-button')
+
+_start_pipeline()
+
+get_chart_ref()
+
+get_chart_actual()
